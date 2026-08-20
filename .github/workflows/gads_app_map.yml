@@ -45,7 +45,10 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install "google-ads>=25.0.0,<27.0.0" google-cloud-bigquery
+            # 🔴 google-ads par UPPER CAP MAT LAGAYEIN — har API version sirf
+            #    ~12 mahine chalti hai. "<27.0.0" ne v19 di thi, jo 11 Feb 2026
+            #    ko sunset ho chuki thi → "501 GRPC target method can't be resolved"
+            pip install google-ads google-cloud-bigquery
           fi
 
       - name: Fetch campaign → app mapping
