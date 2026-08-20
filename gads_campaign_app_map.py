@@ -236,13 +236,35 @@ def main():
 
     client = get_client()
 
-    log("── accounts ────────────────────────────────────────")
+    # 🔍 kaunsi API version use ho rahi hai — log mein saaf nazar aaye.
+    #    Google Ads ki har version ~12 mahine chalti hai; sunset hone par
+    #    "501 GRPC target method can't be resolved" aata hai.
+    #    (v19 11-Feb-2026 ko sunset hui thi — wahi masla tha)
+    try:
+        from google.ads.googleads import client as _gac
+        log(f"   Google Ads API version: {_gac.GoogleAdsClient.get_default_version()}")
+    except Exception:
+        try:
+            import google.ads.googleads as _ga
+            log(f"   google-ads library: {_ga.VERSION}")
+        except Exception:
+            pass
+
+    log("\n── accounts ────────────────────────────────────────")
     try:
         accounts = list_child_accounts(client)
     except GoogleAdsException as ex:
         fail("MCC ke accounts nahi mile — "
              + "; ".join(e.message for e in ex.failure.errors[:2])
              + "\n   → developer token approve hua? login_customer_id sahi hai?")
+    except Exception as exc:
+        if "can't be resolved" in str(exc) or "UNIMPLEMENTED" in str(exc):
+            fail("🔴 API VERSION SUNSET HO CHUKI HAI\n"
+                 "   Google Ads ki har version ~12 mahine chalti hai.\n"
+                 "   → requirements.txt mein `google-ads` par UPPER CAP na rakhein\n"
+                 "   → phir: pip install --upgrade google-ads\n"
+                 f"   asal error: {exc}")
+        fail(f"MCC ke accounts nahi mile — {type(exc).__name__}: {exc}")
     if not accounts:
         fail("MCC ke neeche koi chalu account nahi mila")
 
