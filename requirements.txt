@@ -1,2 +1,26 @@
-google-ads>=25.0.0,<27.0.0
+# =============================================================================
+#  gads_campaign_app_map.py  —  dependencies
+# =============================================================================
+#
+#  ⚠️ google-ads par UPPER CAP MAT LAGAYEIN
+#
+#     Google Ads API ki har version sirf ~12 mahine chalti hai:
+#         v19  →  sunset 11 Feb 2026   (aur usi ki wajah se ye error aaya:
+#                                        "501 GRPC target method can't be resolved")
+#         v25  →  release 22 Jul 2026  ·  sunset ~Aug 2027   ← abhi current
+#
+#     Agar version pin kar dein to jis din wo API version sunset hogi,
+#     pipeline CHUP-CHAAP toot jayegi. Is liye yahan sirf FLOOR hai,
+#     ceiling nahi — pip hamesha taza library le aayegi.
+#
+#     Script kisi version ko hard-code nahi karti — library ka default
+#     use karti hai, jo hamesha us ki sab se nayi supported version hoti hai.
+#
+#  ⚠️ Google ab MAHANA release karta hai (Jan 2026 se), is liye library
+#     saal mein 1-2 baar update karni chahiye.
+# =============================================================================
+
+google-ads
+
+# BigQuery — ye stable hai, cap lagana mehfooz
 google-cloud-bigquery>=3.25.0,<4.0.0
