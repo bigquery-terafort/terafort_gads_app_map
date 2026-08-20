@@ -1,1 +1,147 @@
+# =============================================================================
+#  Google Ads API  →  campaign ↔ app mapping                        (v1.0)
+#  path: .github/workflows/gads_app_map.yml
+# =============================================================================
+#  Google Ads API se campaign.app_campaign_setting.app_id laata hai —
+#  Google ka apna authoritative field. Us se UNMAPPED campaigns ka
+#  masla hamesha ke liye khatam.
+#
+#  ⏰ 01:30 UTC (06:30 PKT) — google_ads staging (09:00 PKT) se PEHLE
+#
+#  SECRETS: GADS_DEVELOPER_TOKEN · GADS_CLIENT_ID · GADS_CLIENT_SECRET
+#           GADS_REFRESH_TOKEN · GADS_LOGIN_CUSTOMER_ID
+#           GCP_PROJECT · GCP_CREDENTIALS_JSON
+# =============================================================================
+name: gads_campaign_app_map
 
+on:
+  schedule:
+    - cron: "30 1 * * *"        # 01:30 UTC = 06:30 PKT
+  workflow_dispatch:
+
+permissions:
+  contents: write               # keepalive ke liye
+
+concurrency:
+  group: gads-app-map
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install "google-ads>=25.0.0,<27.0.0" google-cloud-bigquery
+          fi
+
+      - name: Fetch campaign → app mapping
+        env:
+          GADS_DEVELOPER_TOKEN:   ${{ secrets.GADS_DEVELOPER_TOKEN }}
+          GADS_CLIENT_ID:         ${{ secrets.GADS_CLIENT_ID }}
+          GADS_CLIENT_SECRET:     ${{ secrets.GADS_CLIENT_SECRET }}
+          GADS_REFRESH_TOKEN:     ${{ secrets.GADS_REFRESH_TOKEN }}
+          GADS_LOGIN_CUSTOMER_ID: ${{ secrets.GADS_LOGIN_CUSTOMER_ID }}
+          GCP_PROJECT:            ${{ secrets.GCP_PROJECT }}
+          GCP_CREDENTIALS_JSON:   ${{ secrets.GCP_CREDENTIALS_JSON }}
+          BQ_DATASET:             Google_ads_master
+        run: python gads_campaign_app_map.py
+
+      # 🔑 Health check — kitne UNMAPPED bache
+      - name: Health check
+        if: always()
+        env:
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          GCP_PROJECT:          ${{ secrets.GCP_PROJECT }}
+        run: |
+          echo "$GCP_CREDENTIALS_JSON" > /tmp/gcp.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp.json
+          python - <<'EOF'
+          import os
+          from google.cloud import bigquery
+          bq = bigquery.Client(project=os.environ["GCP_PROJECT"])
+          p  = os.environ["GCP_PROJECT"]
+
+          try:
+              q = f"""SELECT COUNT(*) n,
+                             COUNTIF(platform='android') andr,
+                             COUNTIF(platform='ios') ios,
+                             COUNT(DISTINCT customer_id) accts,
+                             CAST(MAX(_loaded_at) AS STRING) last_load
+                      FROM `{p}.Google_ads_master.gads_campaign_app_map`"""
+              r = list(bq.query(q).result())[0]
+              print(f"\n🔑 gads_campaign_app_map: {r.n} campaigns")
+              print(f"   android {r.andr} · ios {r.ios} · accounts {r.accts}")
+              print(f"   load: {r.last_load}")
+          except Exception as e:
+              print(f"\n🔴 table nahi bani — {type(e).__name__}")
+              raise SystemExit(1)
+
+          # kitne UNMAPPED campaigns ab cover ho gaye
+          try:
+              q = f"""
+              WITH un AS (
+                SELECT DISTINCT campaign_id, customer_id,
+                       SUM(spend_usd) OVER (PARTITION BY campaign_id) sp
+                FROM `{p}.grand_master_staging.google_ads_staging`
+                WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
+                  AND ga_package_name = 'UNMAPPED')
+              SELECT COUNT(*) total,
+                     COUNTIF(m.campaign_id IS NOT NULL) ab_map_ho_jayenge,
+                     ROUND(SUM(IF(m.campaign_id IS NOT NULL, un.sp, 0)),2) recovered_spend
+              FROM un LEFT JOIN `{p}.Google_ads_master.gads_campaign_app_map` m
+                ON m.campaign_id = un.campaign_id AND m.customer_id = un.customer_id"""
+              r = list(bq.query(q).result())[0]
+              print(f"\n📊 UNMAPPED campaigns (60 din): {r.total}")
+              print(f"   ✅ ab map ho jayenge: {r.ab_map_ho_jayenge}")
+              print(f"   💰 wapas aayega: ${r.recovered_spend:,.2f}")
+              if r.total and r.ab_map_ho_jayenge < r.total:
+                  print(f"   ⚠️  {r.total - r.ab_map_ho_jayenge} phir bhi bache — "
+                        f"wo shayad app campaigns nahi (search/display)")
+          except Exception as e:
+              print(f"   (coverage check nahi chala / {type(e).__name__})")
+          EOF
+
+  # ═══════════════════════════════════════════════════════════════════════
+  #  🔴 KEEPALIVE — 60-din wala auto-disable rokta hai
+  # ═══════════════════════════════════════════════════════════════════════
+  keepalive:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Keepalive commit (sirf agar 45 din se koi commit nahi)
+        run: |
+          set -euo pipefail
+          LAST=$(git log -1 --format=%ct)
+          NOW=$(date +%s)
+          DAYS=$(( (NOW - LAST) / 86400 ))
+          echo "aakhri commit ko $DAYS din huye"
+          if [ "$DAYS" -lt 45 ]; then
+            echo "✅ 45 din se kam — zaroorat nahi"; exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git add .keepalive
+          git commit -m "chore(keepalive): workflow zinda [skip ci]"
+          git push
+          echo "✅ keepalive commit ho gaya"
